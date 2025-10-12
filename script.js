@@ -8,7 +8,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const registerBtn = document.getElementById('register-btn');
     const logoutBtn = document.getElementById('logout-btn');
     const userEmailDisplay = document.getElementById('user-email-display');
-
     const form = document.getElementById('add-question-form');
     const questionText = document.getElementById('question-text');
     const questionLink = document.getElementById('question-link');
@@ -28,36 +27,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     const darkModeToggle = document.getElementById('dark-mode-toggle');
     const sunIcon = document.getElementById('sun-icon');
     const moonIcon = document.getElementById('moon-icon');
-
     const calendarHeader = document.getElementById('calendar-month-year');
     const calendarGrid = document.getElementById('calendar-grid');
     const prevMonthBtn = document.getElementById('prev-month');
     const nextMonthBtn = document.getElementById('next-month');
-    
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
-
     const editForm = document.getElementById('edit-question-form');
     const confirmActionBtn = document.getElementById('confirm-action-btn');
     const confirmTitle = document.getElementById('confirm-title');
     const confirmText = document.getElementById('confirm-text');
     const notesContent = document.getElementById('notes-content');
-    
     const importBtn = document.getElementById('import-btn');
     const exportBtn = document.getElementById('export-btn');
     const importFileInput = document.getElementById('import-file-input');
-
     const streakCounterEl = document.getElementById('streak-counter');
     const streakTextEl = document.getElementById('streak-text');
+
+    // --- SUPABASE SETUP ---
+    const SUPABASE_URL = 'https://jyaspzredwtmxxpzmjez.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5YXNwenJlZHd0bXh4cHptamV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4OTk2ODMsImV4cCI6MjA3NTQ3NTY4M30.F6vDsrkG_-JUiSqac7uWlpbF3eIOkceLaJbuvT0vBPs';
+    
+    // FIX: Correctly initialize the Supabase client
+    const { createClient } = supabase;
+    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     // --- APP STATE & CONFIG ---
     let questions = [];
     let stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
     let currentUser = null;
-    let userDataObjectId = null; // To store the objectId of the user's data record
-
     const defaultIntervals = [3, 7, 15, 30, 60];
-    let calendarDate; 
+    let calendarDate;
     let selectedStartDate = null;
     const rewardMilestones = {
         3: { title: "On a Roll!", text: "You've maintained a 3-day streak. Great start!" },
@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         30: { title: "One Month Milestone!", text: "Incredible consistency! You're building a powerful knowledge base." }
     };
     let confirmCallback = null;
-    let timeOffset = 0; 
+    let timeOffset = 0;
 
     // --- UI VIEW MANAGEMENT ---
     const showApp = () => {
@@ -77,18 +77,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const showLogin = () => {
-        // Reset state
         questions = [];
         stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
         currentUser = null;
-        userDataObjectId = null;
         updateUI(); // Clear the UI with empty data
-        
         appScreen.classList.add('hidden');
         loginScreen.classList.remove('hidden');
     };
 
-    // --- DATA HANDLING ---
+    // --- DATA HANDLING (Converted to Supabase) ---
     const getQuestions = () => questions;
     const getStats = () => stats;
 
@@ -97,32 +94,29 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.error("Save failed: No user logged in.");
             return;
         }
-
+        
         const oldQuestions = [...questions];
         const oldStats = { ...stats };
-
         questions = newQuestions;
         stats = newStats;
         updateUI();
 
-        const dataToSave = { questions, stats };
-        if (userDataObjectId) {
-            dataToSave.objectId = userDataObjectId;
-        }
+        const dataToSave = { 
+            user_id: currentUser.id, 
+            questions: newQuestions, 
+            stats: newStats 
+        };
 
-        try {
-            const savedObject = await Backendless.Data.of('user_data').save(dataToSave);
-            console.log("Data saved successfully:", savedObject);
-            if (!userDataObjectId) {
-                userDataObjectId = savedObject.objectId;
-            }
-        } catch (error) {
-            console.error("Error saving data to Backendless:", error);
+        const { error } = await supabaseClient.from('user_data').upsert(dataToSave, { onConflict: 'user_id' });
+
+        if (error) {
+            console.error("Error saving data to Supabase:", error);
             showAlert(`Could not save changes: ${error.message}`, "Save Error");
-
             questions = oldQuestions;
             stats = oldStats;
             updateUI();
+        } else {
+            console.log("Data saved successfully to Supabase.");
         }
     };
     
@@ -154,153 +148,104 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
 
-    // --- INITIALIZATION ---
-    const init = async () => {
-        const BACKENDLESS_APP_ID = 'DFE02D6C-1668-4FEA-9DE5-C312B7E5888A'; 
-        const BACKENDLESS_API_KEY = 'EBFE225A-3D16-4347-A1F6-B99A702A7B91';
-
-        if (BACKENDLESS_APP_ID === 'YOUR_APP_ID' || BACKENDLESS_API_KEY === 'YOUR_JS_API_KEY') {
-            showAlert('Please update script.js with your Backendless App ID and JS API Key.', 'Configuration Needed');
-            return;
-        }
-
-        Backendless.initApp(BACKENDLESS_APP_ID, BACKENDLESS_API_KEY);
-        
-        await syncTime();
-        calendarDate = getCorrectedDate();
-        setupEventListeners();
-        applyTheme();
-
-        try {
-            console.log("Attempting to validate existing login...");
-            const isValidLogin = await Backendless.UserService.isValidLogin();
-            if (isValidLogin) {
-                currentUser = await Backendless.UserService.getCurrentUser();
-                console.log("User session restored. User email:", currentUser.email);
-                await fetchInitialData();
-                showApp();
-            } else {
-                console.log("No valid session found. Showing login screen.");
-                showLogin();
-            }
-        } catch (error) {
-            console.error("Error during init validation:", error);
-            showLogin();
-        }
-    };
-    
-    const fetchInitialData = async () => {
-        if (!currentUser) {
-            console.log("Fetch skipped: No current user.");
-            return;
-        }
-
-        console.log(`Fetching data for ownerId: '${currentUser.objectId}'`);
-
-        try {
-            const queryBuilder = Backendless.DataQueryBuilder.create();
-            queryBuilder.setWhereClause(`ownerId = '${currentUser.objectId}'`);
-            const result = await Backendless.Data.of('user_data').find(queryBuilder);
-
-            console.log("Backendless fetch result:", result);
-
-            if (result.length > 0) {
-                const userData = result[0];
-                console.log("Data fetched successfully:", userData);
-                questions = userData.questions || [];
-                stats = userData.stats || { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
-                userDataObjectId = userData.objectId; 
-                console.log(`Found existing data. Loaded ${questions.length} questions.`);
-            } else {
-                console.log("No existing data found for this user. A new record will be created on the first save.");
-            }
-        } catch (error) {
-            console.error("Error fetching initial data from Backendless:", error);
-            showAlert(`Could not load your data: ${error.message}`, "Data Load Error");
-        }
-        
-        updateUI();
-    };
-    
-    // --- EVENT HANDLERS & LISTENERS ---
-
-    const sendWelcomeEmail = async (userEmail) => {
-        const templateName = 'welcome_email'; // This name MUST match the template name in your Backendless dashboard
-        const recipients = [userEmail];
-
-        try {
-            // The third argument is for template values, we don't need any for a simple welcome email.
-            await Backendless.Messaging.sendEmailFromTemplate(templateName, new Backendless.Bodyparts({}), recipients);
-            console.log(`Welcome email successfully queued for sending to ${userEmail}`);
-        } catch (error) {
-            console.error("Failed to send welcome email:", error);
-            // Non-critical error, so we won't show an alert to the user.
-        }
-    };
-
+    // --- AUTHENTICATION (Converted to Supabase) ---
     const handleLogin = async (e) => {
         e.preventDefault();
         const email = loginEmailInput.value;
         const password = loginPasswordInput.value;
-        try {
-            currentUser = await Backendless.UserService.login(email, password, true); // stayLoggedIn = true
-            console.log("Login successful:", currentUser.email);
-            await fetchInitialData();
-            showApp();
-        } catch (error) {
+        const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+
+        if (error) {
             console.error("Login failed:", error);
             showAlert(`Login failed: ${error.message}`, "Login Error");
+        } else {
+            console.log("Login successful:", data.user.email);
+            // onAuthStateChange listener will handle the rest
         }
     };
 
     const handleRegister = async () => {
         const email = loginEmailInput.value;
         const password = loginPasswordInput.value;
-        
         if (!email || !password) {
             showAlert("Please enter both an email and a password to register.");
             return;
         }
-
-        const user = new Backendless.User();
-        user.email = email;
-        user.password = password;
-
-        try {
-            const registeredUser = await Backendless.UserService.register(user);
-            console.log("Registration successful for:", registeredUser.email);
-            
-            await sendWelcomeEmail(registeredUser.email);
-
-            // Automatically log the new user in
-            currentUser = await Backendless.UserService.login(email, password, true);
-            console.log("Auto-login successful:", currentUser.email);
-            await fetchInitialData();
-            showApp();
-            
-        } catch (error) {
+        const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) {
             console.error("Registration failed:", error);
             showAlert(`Registration failed: ${error.message}`, "Registration Error");
+        } else {
+            console.log("Registration successful for:", data.user.email);
+            showAlert("Registration successful! Please check your email to confirm your account.");
         }
     };
     
     const handleLogout = async () => {
-        try {
-            await Backendless.UserService.logout();
-            console.log("Logout successful.");
-            showLogin();
-        } catch (error) {
+        const { error } = await supabaseClient.auth.signOut();
+        if (error) {
             console.error("Logout failed:", error);
             showAlert(`Logout failed: ${error.message}`, "Logout Error");
         }
     };
 
+    // --- INITIALIZATION ---
+    const fetchInitialData = async () => {
+        if (!currentUser) return;
+        
+        console.log(`Fetching data for user: ${currentUser.id}`);
+        const { data, error } = await supabaseClient
+            .from('user_data')
+            .select('*')
+            .eq('user_id', currentUser.id)
+            .single();
 
+        if (error && error.code !== 'PGRST116') { // PGRST116 = row not found, which is ok
+            console.error("Error fetching initial data from Supabase:", error);
+            showAlert(`Could not load your data: ${error.message}`, "Data Load Error");
+        } else if (data) {
+            console.log("Data fetched successfully:", data);
+            questions = data.questions || [];
+            stats = data.stats || { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
+        } else {
+            console.log("No existing data found for this user. A new record will be created on the first save.");
+            questions = [];
+            stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
+        }
+        updateUI();
+    };
+    
+    const init = async () => {
+        await syncTime();
+        calendarDate = getCorrectedDate();
+        setupEventListeners();
+        applyTheme();
+
+        const { data: { session } } = await supabaseClient.auth.getSession();
+        if (session) {
+            currentUser = session.user;
+            await fetchInitialData();
+            showApp();
+        } else {
+            showLogin();
+        }
+
+        supabaseClient.auth.onAuthStateChange(async (event, session) => {
+            if (event === 'SIGNED_IN') {
+                currentUser = session.user;
+                await fetchInitialData();
+                showApp();
+            } else if (event === 'SIGNED_OUT') {
+                showLogin();
+            }
+        });
+    };
+    
+    // --- EVENT HANDLERS & LISTENERS ---
     const setupEventListeners = () => {
         loginForm.addEventListener('submit', handleLogin);
         registerBtn.addEventListener('click', handleRegister);
         logoutBtn.addEventListener('click', handleLogout);
-
         form.addEventListener('submit', handleFormSubmit);
         revisionList.addEventListener('click', handleRevisionListClick);
         todayRevisionList.addEventListener('click', handleRevisionListClick);
@@ -310,7 +255,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         difficultyFilter.addEventListener('change', updateUI);
         allQuestionsDifficultyFilter.addEventListener('change', updateUI);
         darkModeToggle.addEventListener('click', toggleTheme);
-        
         prevMonthBtn.addEventListener('click', () => {
             calendarDate.setMonth(calendarDate.getMonth() - 1);
             renderCalendar(getQuestions());
@@ -319,7 +263,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             calendarDate.setMonth(calendarDate.getMonth() + 1);
             renderCalendar(getQuestions());
         });
-
         calendarGrid.addEventListener('click', handleCalendarDayClick);
         editForm.addEventListener('submit', handleEditFormSubmit);
         confirmActionBtn.addEventListener('click', () => {
@@ -329,7 +272,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         exportBtn.addEventListener('click', exportData);
         importBtn.addEventListener('click', () => importFileInput.click());
         importFileInput.addEventListener('change', importData);
-        
         document.querySelectorAll('.close-modal-btn').forEach(btn => {
             btn.addEventListener('click', () => closeModal(btn.dataset.modalId));
         });
@@ -350,11 +292,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const openModal = (modalId, onOpenCallback) => {
-        if (onOpenCallback) onOpenCallback();
-        document.getElementById(modalId).classList.remove('hidden');
+        const modal = document.getElementById(modalId);
+        if(modal) {
+            if (onOpenCallback) onOpenCallback();
+            modal.classList.remove('hidden');
+        }
     };
     const closeModal = (modalId) => {
-        document.getElementById(modalId).classList.add('hidden');
+        const modal = document.getElementById(modalId);
+        if(modal) modal.classList.add('hidden');
     };
     
     const applyTheme = () => {
@@ -391,34 +337,40 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (currentStats.lastCompletedDate === todayStr) return;
         if (currentStats.lastCompletedDate === yesterdayStr) {
             currentStats.streak += 1;
-            await checkRewards(currentStats);
         } else {
             currentStats.streak = 1;
         }
         currentStats.lastCompletedDate = todayStr;
+        // Check for rewards before saving
+        await checkRewards(currentStats);
         await saveData(getQuestions(), currentStats);
     };
 
     const checkRewards = async (s) => {
         const { streak, unlockedRewards } = s;
-        if (rewardMilestones[streak] && !unlockedRewards.includes(streak)) {
+        if (rewardMilestones[streak] && !(unlockedRewards || []).includes(streak)) {
             document.getElementById('reward-title').textContent = rewardMilestones[streak].title;
             document.getElementById('reward-text').textContent = rewardMilestones[streak].text;
             openModal('reward-modal');
-            confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
-            s.unlockedRewards.push(streak);
-            await saveData(getQuestions(), s);
+            if(window.confetti) {
+                confetti({ particleCount: 100, spread: 70, origin: { y: 0.6 } });
+            }
+            s.unlockedRewards = [...(s.unlockedRewards || []), streak];
         }
     };
 
-    const renderStreak = async () => {
-        let currentStats = { ...getStats() };
+    const renderStreak = () => {
+        const currentStats = getStats();
+        let displayStreak = currentStats.streak || 0;
+
+        // If the streak is broken, just display 0. 
+        // The actual state will be reset to 1 on the next completion via updateStreak().
         if (currentStats.lastCompletedDate && currentStats.lastCompletedDate < getYesterdayStr()) {
-            currentStats.streak = 0;
-            await saveData(getQuestions(), currentStats);
+            displayStreak = 0;
         }
-        streakCounterEl.textContent = currentStats.streak || 0;
-        streakTextEl.textContent = currentStats.streak > 0 ? `You're on a ${currentStats.streak}-day streak!` : 'Complete one to start!';
+
+        streakCounterEl.textContent = displayStreak;
+        streakTextEl.textContent = displayStreak > 0 ? `You're on a ${displayStreak}-day streak!` : 'Complete one to start!';
     };
     
     const renderFormHeader = () => {
@@ -516,7 +468,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         confirmCallback = onConfirm;
         openModal('confirm-modal');
     };
-     const showAlert = (text, title = 'Invalid Input') => {
+     const showAlert = (text, title = 'Alert') => {
         document.getElementById('alert-title').textContent = title;
         document.getElementById('alert-text').textContent = text;
         openModal('alert-modal');
@@ -539,7 +491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             openModal('edit-modal');
         }
     };
-     const openNotesModal = (id) => {
+    const openNotesModal = (id) => {
         const question = getQuestions().find(q => q.id === id);
         if (question) {
             notesContent.textContent = question.notes || 'No notes added yet.';
@@ -556,10 +508,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             question.completedDates.push(date);
             if (date === getTodayStr()) {
                 const allTodaysItems = currentQuestions.filter(q => q.revisionDates.includes(date));
-                const completedTodaysItems = allTodaysItems.filter(q => q.completedDates.includes(date));
-                if (allTodaysItems.length > 0 && completedTodaysItems.length === 1) { 
+                const allTodaysCompleted = allTodaysItems.every(q => q.completedDates.includes(date));
+                if (allTodaysItems.length > 0 && allTodaysCompleted) { 
                      await updateStreak();
-                     return; // updateStreak already saves, so we can exit to avoid double save
+                     return; 
                 }
             }
         } else {
@@ -603,9 +555,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         reader.readAsText(file);
     };
     
-    // --- RENDER FUNCTIONS (These remain mostly the same, as they operate on local state) ---
+    // --- RENDER FUNCTIONS ---
     const populateTopicFilter = (q) => {
-        const topics = [...new Set(q.map(item => item.topic))];
+        const topics = [...new Set(q.map(item => item.topic).filter(Boolean))];
         const currentVal = topicFilter.value;
         topicFilter.innerHTML = '<option value="">All Topics</option>';
         topics.sort().forEach(topic => {
@@ -622,11 +574,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const year = calendarDate.getFullYear();
         const month = calendarDate.getMonth();
         calendarHeader.textContent = `${calendarDate.toLocaleString('default', { month: 'long' })} ${year}`;
-
         const firstDayOfMonth = new Date(year, month, 1).getDay();
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         const revisionDatesSet = new Set(q.flatMap(item => item.revisionDates));
-
         const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         dayNames.forEach(day => {
             const dayEl = document.createElement('div');
@@ -634,22 +584,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             dayEl.textContent = day;
             calendarGrid.appendChild(dayEl);
         });
-
         for (let i = 0; i < firstDayOfMonth; i++) calendarGrid.appendChild(document.createElement('div'));
         for (let i = 1; i <= daysInMonth; i++) {
             const dayEl = document.createElement('div');
             const monthString = String(month + 1).padStart(2, '0');
             const dayString = String(i).padStart(2, '0');
             const currentDateStr = `${year}-${monthString}-${dayString}`;
-            
             dayEl.textContent = i;
             dayEl.className = 'calendar-day';
             dayEl.dataset.date = currentDateStr;
-
             if (revisionDatesSet.has(currentDateStr)) dayEl.classList.add('has-revision');
             if (currentDateStr === getTodayStr()) dayEl.classList.add('is-today');
             if (currentDateStr === selectedStartDate) dayEl.classList.add('is-selected');
-
             calendarGrid.appendChild(dayEl);
         }
     };
@@ -667,8 +613,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             <input type="checkbox" data-id="${item.id}" data-date="${item.revisionDate}" ${isDone ? 'checked' : ''} class="custom-checkbox mt-1 h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
             <div class="flex-1">
                 <div class="flex items-center gap-2 flex-wrap">
-                     <span class="inline-block bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300 text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.topic}</span>
-                     <span class="inline-block ${difficultyColors[item.difficulty] || difficultyColors.Medium} text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.difficulty}</span>
+                    <span class="inline-block bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300 text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.topic}</span>
+                    <span class="inline-block ${difficultyColors[item.difficulty] || difficultyColors.Medium} text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.difficulty}</span>
                 </div>
                 <p class="text-gray-700 dark:text-gray-300 mt-1.5 ${isDone ? 'line-through' : ''}">${item.text}</p>
             </div>
@@ -676,9 +622,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ${item.link ? `<a href="${item.link}" target="_blank" class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-1" title="Open question link"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg></a>` : ''}
                 <button data-id="${item.id}" data-action="view-notes" class="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1" title="View notes"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 16c1.255 0 2.443-.29 3.5-.804V4.804zM14.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 0114.5 16c1.255 0 2.443-.29 3.5-.804v-10A7.968 7.968 0 0014.5 4z" /></svg></button>
                 <button data-id="${item.id}" data-action="edit" class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1" title="Edit question"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg></button>
-                <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg>
-                </button>
+                <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg></button>
             </div>
            `;
       return li;
@@ -702,9 +646,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         let todaysItems = q
             .filter(item => item.revisionDates.includes(todayStr))
             .map(item => ({ ...item, revisionDate: todayStr }));
-
         todaysItems = applyFilters(todaysItems);
-
         if (todaysItems.length === 0) {
             todayRevisionList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-4">All caught up for today! 🎉</p>`;
             return;
@@ -722,10 +664,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (!scheduledRevisions[date]) scheduledRevisions[date] = [];
             scheduledRevisions[date].push({ ...item, revisionDate: date });
         }));
-        
         const sortedDates = Object.keys(scheduledRevisions).sort((a, b) => new Date(a) - new Date(b));
         const todayStr = getTodayStr();
-        
         let hasVisibleRevisions = false;
         sortedDates.forEach(date => {
             let itemsForDate = applyFilters(scheduledRevisions[date]);
@@ -736,7 +676,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             let dateHeaderClass = "text-lg font-semibold text-gray-800 dark:text-gray-200";
             if (date === todayStr) dateHeaderClass = "text-lg font-bold text-indigo-600 dark:text-indigo-400";
             else if (date < todayStr) dateHeaderClass = "text-lg font-semibold text-gray-500 dark:text-gray-400";
-            
             const dateGroupEl = document.createElement('div');
             dateGroupEl.className = 'fade-in';
             dateGroupEl.innerHTML = `<h3 class="${dateHeaderClass}">${formattedDate} ${date === todayStr ? '(Today)' : ''}</h3>`;
@@ -746,7 +685,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             dateGroupEl.appendChild(ul);
             revisionList.appendChild(dateGroupEl);
         });
-
          if (!hasVisibleRevisions) {
             revisionList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-8">No scheduled revisions found for the selected filters.</p>`;
         }
@@ -759,7 +697,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 counts[item.difficulty]++;
             }
         });
-
         difficultyCountsEl.innerHTML = `
             <span class="font-semibold text-green-600 dark:text-green-400">Easy: ${counts.Easy}</span>
             <span class="font-semibold text-yellow-600 dark:text-yellow-400">Medium: ${counts.Medium}</span>
@@ -769,23 +706,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     const renderAllQuestionsList = (q) => {
         allQuestionsList.innerHTML = '';
-        
         const searchTerm = searchFilter.value.toLowerCase();
         const selectedTopic = topicFilter.value;
         const selectedDifficulty = allQuestionsDifficultyFilter.value;
-
         const filteredQuestions = q.filter(item => {
             const textMatch = !searchTerm || item.text.toLowerCase().includes(searchTerm);
             const topicMatch = !selectedTopic || item.topic === selectedTopic;
             const difficultyMatch = !selectedDifficulty || item.difficulty === selectedDifficulty;
             return textMatch && topicMatch && difficultyMatch;
         });
-
         if (filteredQuestions.length === 0) {
             allQuestionsList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-8">No questions added yet, or none match the current filters.</p>`;
             return;
         }
-
         const ul = document.createElement('ul');
         ul.className = 'space-y-3';
         filteredQuestions.sort((a, b) => b.id - a.id);
@@ -815,14 +748,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 ${item.link ? `<a href="${item.link}" target="_blank" class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-1" title="Open question link"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg></a>` : ''}
                 <button data-id="${item.id}" data-action="view-notes" class="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1" title="View notes"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 16c1.255 0 2.443-.29 3.5-.804V4.804zM14.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 0114.5 16c1.255 0 2.443-.29 3.5-.804v-10A7.968 7.968 0 0014.5 4z" /></svg></button>
                 <button data-id="${item.id}" data-action="edit" class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1" title="Edit question"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg></button>
-                <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg>
-                </button>
+                <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg></button>
             </div>
-            `;
+           `;
         return li;
     };
-
 
     // Start the application
     init();
