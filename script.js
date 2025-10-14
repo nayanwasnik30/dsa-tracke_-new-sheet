@@ -43,8 +43,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     const importFileInput = document.getElementById('import-file-input');
     const streakCounterEl = document.getElementById('streak-counter');
     const streakTextEl = document.getElementById('streak-text');
-    // FIX: Add selector for the new loading modal
     const loadingModal = document.getElementById('loading-modal');
+    // NEW SELECTORS for the "All Questions" filters
+    const allQuestionsSearchFilter = document.getElementById('all-questions-search-filter');
+    const allQuestionsTopicFilter = document.getElementById('all-questions-topic-filter');
 
     // --- SUPABASE SETUP ---
     const SUPABASE_URL = 'https://jyaspzredwtmxxpzmjez.supabase.co';
@@ -68,7 +70,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     let confirmCallback = null;
     let timeOffset = 0;
-    // FIX: State for the autosave feature
     let lastSavedState = '';
 
     // --- UI VIEW MANAGEMENT ---
@@ -88,7 +89,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         loginScreen.classList.remove('hidden');
     };
     
-    // FIX: Helper functions for the loading spinner
     const showLoading = () => loadingModal.classList.remove('hidden');
     const hideLoading = () => loadingModal.classList.add('hidden');
 
@@ -96,14 +96,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     const getQuestions = () => questions;
     const getStats = () => stats;
 
-    // FIX: Refactored saveData to be "pessimistic" and provide immediate feedback
     const saveData = async (newQuestions, newStats, isAutosave = false) => {
         if (!currentUser) {
             if (!isAutosave) console.error("Save failed: No user logged in.");
             return;
         }
         
-        // Don't show the loading spinner for silent background saves
         if (!isAutosave) showLoading();
 
         try {
@@ -115,31 +113,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     
             const { error } = await supabaseClient.from('user_data').upsert(dataToSave, { onConflict: 'user_id' });
 
-            if (error) {
-                // Throw the error to be caught by the catch block
-                throw error;
-            }
+            if (error) throw error;
             
-            // --- SUCCESS ---
             console.log("Data saved successfully to Supabase.");
-            // Now that we know it's saved, update the global state
             questions = newQuestions;
             stats = newStats;
-            // Update the snapshot for the autosave feature
             lastSavedState = JSON.stringify({ questions, stats });
-            // And finally, update the UI
             updateUI();
 
         } catch (error) {
-            // --- FAILURE ---
             console.error("Error saving data to Supabase:", error);
-            // Only show an alert for user-initiated saves, not background autosaves
             if (!isAutosave) {
                 showAlert(`Could not save changes due to a network issue. Your data has not been changed. Please check your connection and try again.`, "Save Error");
             }
-            // IMPORTANT: We don't revert anything because the global state was never changed in the first place.
         } finally {
-            // Always hide the spinner
             if (!isAutosave) hideLoading();
         }
     };
@@ -166,7 +153,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
-                const response = await fetch('https://worldtimeapi.org/api/timezone/Asia/Kolkata', { signal: controller.signal });
+                const response = await fetch('https://worldtimeapi.org/api/timezone/Asia/Kolkata', {
+                    signal: controller.signal
+                });
                 
                 clearTimeout(timeoutId);
 
@@ -251,7 +240,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             questions = [];
             stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
         }
-        // FIX: Set the initial state for the autosave feature
         lastSavedState = JSON.stringify({ questions, stats });
         updateUI();
     };
@@ -281,16 +269,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         });
 
-        // FIX: Set up the 30-second autosave interval
         setInterval(() => {
-            if (!currentUser) return; // Don't run if logged out
+            if (!currentUser) return; 
 
             const currentState = JSON.stringify({ questions: getQuestions(), stats: getStats() });
             if (currentState !== lastSavedState) {
                 console.log("Autosave: Changes detected, syncing with database...");
-                saveData(getQuestions(), getStats(), true); // 'true' for a silent autosave
+                saveData(getQuestions(), getStats(), true); 
             }
-        }, 30000); // 30 seconds
+        }, 30000); 
     };
     
     // --- EVENT HANDLERS & LISTENERS ---
@@ -305,7 +292,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         searchFilter.addEventListener('input', updateUI);
         topicFilter.addEventListener('change', updateUI);
         difficultyFilter.addEventListener('change', updateUI);
-        allQuestionsDifficultyFilter.addEventListener('change', updateUI);
         darkModeToggle.addEventListener('click', toggleTheme);
         prevMonthBtn.addEventListener('click', () => {
             calendarDate.setMonth(calendarDate.getMonth() - 1);
@@ -327,11 +313,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelectorAll('.close-modal-btn').forEach(btn => {
             btn.addEventListener('click', () => closeModal(btn.dataset.modalId));
         });
+
+        // NEW Event listeners for the new filters
+        allQuestionsSearchFilter.addEventListener('input', () => renderAllQuestionsList(getQuestions()));
+        allQuestionsTopicFilter.addEventListener('change', () => renderAllQuestionsList(getQuestions()));
+        allQuestionsDifficultyFilter.addEventListener('change', () => renderAllQuestionsList(getQuestions()));
     };
     
     const updateUI = () => {
         const currentQuestions = getQuestions();
         populateTopicFilter(currentQuestions);
+        // NEW: Populate the second topic filter as well
+        populateAllQuestionsTopicFilter(currentQuestions);
         renderFormHeader();
         renderTodaysRevisions(currentQuestions);
         renderRevisions(currentQuestions);
@@ -469,12 +462,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             completedDates: []
         };
     
-        // Create a temporary new list of questions to try and save
         const updatedQuestions = [...getQuestions(), newQuestion];
-        // The new saveData function will handle success/failure
         await saveData(updatedQuestions, getStats());
         
-        // These lines will only run if saveData was successful
         form.reset();
         questionDifficulty.value = 'Medium';
         selectedStartDate = null;
@@ -484,7 +474,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const handleEditFormSubmit = async (e) => {
         e.preventDefault();
         const id = parseInt(document.getElementById('edit-question-id').value);
-        // Create a temporary copy to modify
         let updatedQuestions = JSON.parse(JSON.stringify(getQuestions()));
         const questionIndex = updatedQuestions.findIndex(q => q.id === id);
         
@@ -497,9 +486,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 difficulty: document.getElementById('edit-question-difficulty').value,
                 notes: document.getElementById('edit-question-notes').value
             };
-            // Attempt to save the modified array
             await saveData(updatedQuestions, getStats());
-            // This will only run on successful save
             closeModal('edit-modal');
         }
     };
@@ -567,14 +554,12 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const allTodaysCompleted = allTodaysItems.every(q => q.completedDates.includes(date));
                 if (allTodaysItems.length > 0 && allTodaysCompleted) { 
                      await updateStreak(currentQuestions);
-                     // The return is important to prevent a double-save
                      return; 
                 }
             }
         } else {
             question.completedDates.splice(dateIndex, 1);
         }
-        // This will save the toggled state if the streak logic isn't triggered
         await saveData(currentQuestions, getStats());
     };
 
@@ -627,6 +612,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         topicFilter.value = currentVal;
     };
 
+    // NEW: Function to populate the topic filter in the "All Questions" section
+    const populateAllQuestionsTopicFilter = (q) => {
+        const topics = [...new Set(q.map(item => item.topic).filter(Boolean))];
+        const currentVal = allQuestionsTopicFilter.value;
+        allQuestionsTopicFilter.innerHTML = '<option value="">All Topics</option>';
+        topics.sort().forEach(topic => {
+            const option = document.createElement('option');
+            option.value = topic;
+            option.textContent = topic;
+            allQuestionsTopicFilter.appendChild(option);
+        });
+        allQuestionsTopicFilter.value = currentVal;
+    };
+
     const renderCalendar = (q) => {
         calendarGrid.innerHTML = '';
         const year = calendarDate.getFullYear();
@@ -666,15 +665,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             Hard: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
         };
         const li = document.createElement('li');
-        li.className = `flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 transition-opacity ${isDone ? 'opacity-50' : ''}`;
+        li.className = `flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700 transition-opacity ${isDone ? 'opacity-50' : ''}`;
         li.innerHTML = `
-                <input type="checkbox" data-id="${item.id}" data-date="${item.revisionDate}" ${isDone ? 'checked' : ''} class="custom-checkbox mt-1 h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
-                <div class="flex-1">
-                    <div class="flex items-center gap-2 flex-wrap">
+                <input type="checkbox" data-id="${item.id}" data-date="${item.revisionDate}" ${isDone ? 'checked' : ''} class="custom-checkbox mt-1 h-5 w-5 flex-shrink-0 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
+                <div class="flex-1 min-w-0">
+                    <p class="font-medium text-gray-800 dark:text-gray-200 ${isDone ? 'line-through' : ''}">${item.text}</p>
+                    <div class="flex items-center gap-2 flex-wrap mt-2">
                         <span class="inline-block bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300 text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.topic}</span>
                         <span class="inline-block ${difficultyColors[item.difficulty] || difficultyColors.Medium} text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.difficulty}</span>
                     </div>
-                    <p class="text-gray-700 dark:text-gray-300 mt-1.5 ${isDone ? 'line-through' : ''}">${item.text}</p>
                 </div>
                 <div class="flex items-center space-x-1">
                     ${item.link ? `<a href="${item.link}" target="_blank" class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-1" title="Open question link"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg></a>` : ''}
@@ -762,17 +761,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
     };
     
+    // UPDATED: This function now uses the new dedicated filters
     const renderAllQuestionsList = (q) => {
         allQuestionsList.innerHTML = '';
-        const searchTerm = searchFilter.value.toLowerCase();
-        const selectedTopic = topicFilter.value;
+        const searchTerm = allQuestionsSearchFilter.value.toLowerCase();
+        const selectedTopic = allQuestionsTopicFilter.value;
         const selectedDifficulty = allQuestionsDifficultyFilter.value;
+
         const filteredQuestions = q.filter(item => {
             const textMatch = !searchTerm || item.text.toLowerCase().includes(searchTerm);
             const topicMatch = !selectedTopic || item.topic === selectedTopic;
             const difficultyMatch = !selectedDifficulty || item.difficulty === selectedDifficulty;
             return textMatch && topicMatch && difficultyMatch;
         });
+
         if (filteredQuestions.length === 0) {
             allQuestionsList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-8">No questions added yet, or none match the current filters.</p>`;
             return;
@@ -791,16 +793,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             Hard: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
         };
         const li = document.createElement('li');
-        li.className = `flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700`;
+        li.className = `flex items-start gap-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700`;
         const addedDateFormatted = new Date(item.addedDate + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
         li.innerHTML = `
-            <div class="flex-1">
-                <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex-1 min-w-0">
+                <p class="font-medium text-gray-800 dark:text-gray-200">${item.text}</p>
+                 <div class="flex items-center gap-2 flex-wrap mt-2">
                     <span class="inline-block bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300 text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.topic}</span>
                     <span class="inline-block ${difficultyColors[item.difficulty] || difficultyColors.Medium} text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.difficulty}</span>
                 </div>
-                <p class="text-gray-700 dark:text-gray-300 mt-1.5">${item.text}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Added on: ${addedDateFormatted}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">Added on: ${addedDateFormatted}</p>
             </div>
             <div class="flex items-center space-x-1">
                 ${item.link ? `<a href="${item.link}" target="_blank" class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-1" title="Open question link"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg></a>` : ''}
@@ -815,3 +817,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Start the application
     init();
 });
+   
