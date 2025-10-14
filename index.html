@@ -3,11 +3,94 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DSA Revision Calendar</title>
+    <title>DSA Spaced Repetition Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="favicon.png" href="image/png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        html { scroll-behavior: smooth; }
+        body { font-family: 'Inter', sans-serif; }
+        .custom-checkbox:checked {
+            background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+            background-color: #4f46e5;
+            border-color: #4f46e5;
+        }
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 0.25rem;
+        }
+        .calendar-day {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 2.5rem;
+            width: 2.5rem;
+            font-size: 0.875rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .calendar-day.has-revision {
+            background-color: #e0e7ff; /* indigo-100 */
+            color: #3730a3; /* indigo-800 */
+        }
+        .dark .calendar-day.has-revision {
+            background-color: rgba(67, 56, 202, 0.3);
+            color: #a5b4fc; /* indigo-300 */
+        }
+        .calendar-day.is-today {
+            box-shadow: 0 0 0 2px #4f46e5; /* ring-2 ring-indigo-500 */
+            font-weight: 700;
+        }
+        .calendar-day.is-selected {
+            background-color: #4f46e5; /* bg-indigo-600 */
+            color: white;
+            font-weight: 700;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            transition: opacity 0.2s;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4f46e5;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .notes-content {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* gray-100 */
+            padding: 1rem;
+            border-radius: 0.5rem;
+            min-height: 120px;
+        }
+        .dark .notes-content {
+             background-color: #374151; /* gray-700 */
+        }
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+    </style>
     <script>
         // Set theme on initial load
         if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -232,8 +315,8 @@
     <div id="reward-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 dark:bg-opacity-70 overflow-y-auto h-full w-full hidden z-50">
         <div class="relative top-1/4 mx-auto p-8 border w-full max-w-md shadow-lg rounded-xl bg-white dark:bg-gray-800 modal-content text-center">
              <div class="flex justify-center items-center">
-                <img src="https://placehold.co/150x150/7c3aed/ffffff?text=🎉" alt="Trophy" class="rounded-full">
-            </div>
+                 <img src="https://placehold.co/150x150/7c3aed/ffffff?text=🎉" alt="Trophy" class="rounded-full">
+             </div>
             <h3 id="reward-title" class="text-2xl leading-6 font-bold text-gray-900 dark:text-white mt-4"></h3>
             <p id="reward-text" class="text-md text-gray-600 dark:text-gray-300 mt-2"></p>
             <button class="close-modal-btn mt-6 w-full bg-indigo-600 text-white font-semibold py-2 px-4 rounded-md hover:bg-indigo-700" data-modal-id="reward-modal">Continue Crushing It!</button>
@@ -316,12 +399,10 @@
         </div>
     </div>
     
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
-    
-    <!-- Supabase SDK -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="script.js" defer></script>
-
+    <!-- Loading Modal (Copied from previous version) -->
+    <div id="loading-modal" class="loading-overlay hidden">
+        <div class="loader"></div>
+    </div>
 </body>
 </html>
 
