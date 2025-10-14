@@ -48,7 +48,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const SUPABASE_URL = 'https://jyaspzredwtmxxpzmjez.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5YXNwenJlZHd0bXh4cHptamV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4OTk2ODMsImV4cCI6MjA3NTQ3NTY4M30.F6vDsrkG_-JUiSqac7uWlpbF3eIOkceLaJbuvT0vBPs';
     
-    // FIX: Correctly initialize the Supabase client
     const { createClient } = supabase;
     const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -80,12 +79,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         questions = [];
         stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
         currentUser = null;
-        updateUI(); // Clear the UI with empty data
+        updateUI(); 
         appScreen.classList.add('hidden');
         loginScreen.classList.remove('hidden');
     };
 
-    // --- DATA HANDLING (Converted to Supabase) ---
+    // --- DATA HANDLING ---
     const getQuestions = () => questions;
     const getStats = () => stats;
 
@@ -111,7 +110,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (error) {
             console.error("Error saving data to Supabase:", error);
-            showAlert(`Could not save changes: ${error.message}`, "Save Error");
+            showAlert(`Could not save changes due to a network issue: ${error.message}`, "Save Error");
             questions = oldQuestions;
             stats = oldStats;
             updateUI();
@@ -135,20 +134,44 @@ document.addEventListener('DOMContentLoaded', async () => {
         return dateToYYYYMMDD(yesterday);
     };
     
+    // FIX: This function is now more resilient to network errors.
+    // It will try up to 3 times and has a 5-second timeout for each attempt.
     const syncTime = async () => {
-        try {
-            const response = await fetch('https://worldtimeapi.org/api/timezone/Asia/Kolkata');
-            if (!response.ok) throw new Error('Network response was not ok.');
-            const data = await response.json();
-            const serverTime = data.unixtime * 1000;
-            timeOffset = serverTime - Date.now();
-        } catch (error) {
-            console.warn('Could not sync time. Using local system time.', error);
-            timeOffset = 0; 
+        const MAX_RETRIES = 3;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                // Implement a timeout for the fetch request
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+
+                const response = await fetch('https://worldtimeapi.org/api/timezone/Asia/Kolkata', {
+                    signal: controller.signal
+                });
+                
+                clearTimeout(timeoutId); // Clear the timeout if the request succeeds
+
+                if (!response.ok) throw new Error(`Network response was not ok (status: ${response.status})`);
+                
+                const data = await response.json();
+                const serverTime = data.unixtime * 1000;
+                timeOffset = serverTime - Date.now();
+                console.log("Time synchronized successfully.");
+                return; // Exit the function on success
+            } catch (error) {
+                console.warn(`Time sync attempt ${attempt} failed:`, error.name === 'AbortError' ? 'Request timed out' : error.message);
+                if (attempt === MAX_RETRIES) {
+                    console.error('All time sync attempts failed. Using local system time.');
+                    showAlert("Could not synchronize time with the server. Using your device's local time, which might be inaccurate.", "Time Sync Failed");
+                    timeOffset = 0;
+                } else {
+                    // Wait 1 second before retrying
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
         }
     };
 
-    // --- AUTHENTICATION (Converted to Supabase) ---
+    // --- AUTHENTICATION ---
     const handleLogin = async (e) => {
         e.preventDefault();
         const email = loginEmailInput.value;
@@ -160,7 +183,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             showAlert(`Login failed: ${error.message}`, "Login Error");
         } else {
             console.log("Login successful:", data.user.email);
-            // onAuthStateChange listener will handle the rest
         }
     };
 
@@ -200,7 +222,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             .eq('user_id', currentUser.id)
             .single();
 
-        if (error && error.code !== 'PGRST116') { // PGRST116 = row not found, which is ok
+        if (error && error.code !== 'PGRST116') { 
             console.error("Error fetching initial data from Supabase:", error);
             showAlert(`Could not load your data: ${error.message}`, "Data Load Error");
         } else if (data) {
@@ -216,7 +238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     const init = async () => {
-        await syncTime();
+        await syncTime(); // This will now be more robust
         calendarDate = getCorrectedDate();
         setupEventListeners();
         applyTheme();
@@ -330,7 +352,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         progressBar.style.width = total > 0 ? `${(completed / total) * 100}%` : '0%';
     };
 
-    const updateStreak = async () => {
+    const updateStreak = async (questionsToSave = getQuestions()) => {
         let currentStats = { ...getStats() };
         const todayStr = getTodayStr();
         const yesterdayStr = getYesterdayStr();
@@ -341,9 +363,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentStats.streak = 1;
         }
         currentStats.lastCompletedDate = todayStr;
-        // Check for rewards before saving
         await checkRewards(currentStats);
-        await saveData(getQuestions(), currentStats);
+        await saveData(questionsToSave, currentStats);
     };
 
     const checkRewards = async (s) => {
@@ -363,8 +384,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const currentStats = getStats();
         let displayStreak = currentStats.streak || 0;
 
-        // If the streak is broken, just display 0. 
-        // The actual state will be reset to 1 on the next completion via updateStreak().
         if (currentStats.lastCompletedDate && currentStats.lastCompletedDate < getYesterdayStr()) {
             displayStreak = 0;
         }
@@ -510,7 +529,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const allTodaysItems = currentQuestions.filter(q => q.revisionDates.includes(date));
                 const allTodaysCompleted = allTodaysItems.every(q => q.completedDates.includes(date));
                 if (allTodaysItems.length > 0 && allTodaysCompleted) { 
-                     await updateStreak();
+                     await updateStreak(currentQuestions);
                      return; 
                 }
             }
@@ -556,6 +575,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     // --- RENDER FUNCTIONS ---
+    // All render functions are unchanged. They are included for completeness.
+    // ... (All your render functions from createRevisionListItem to createBaseQuestionListItem go here, exactly as they were)
+
+    // --- RENDER FUNCTIONS (Copied from your original code) ---
     const populateTopicFilter = (q) => {
         const topics = [...new Set(q.map(item => item.topic).filter(Boolean))];
         const currentVal = topicFilter.value;
@@ -610,21 +633,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       const li = document.createElement('li');
       li.className = `flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 transition-opacity ${isDone ? 'opacity-50' : ''}`;
       li.innerHTML = `
-            <input type="checkbox" data-id="${item.id}" data-date="${item.revisionDate}" ${isDone ? 'checked' : ''} class="custom-checkbox mt-1 h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
-            <div class="flex-1">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="inline-block bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300 text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.topic}</span>
-                    <span class="inline-block ${difficultyColors[item.difficulty] || difficultyColors.Medium} text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.difficulty}</span>
+                <input type="checkbox" data-id="${item.id}" data-date="${item.revisionDate}" ${isDone ? 'checked' : ''} class="custom-checkbox mt-1 h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="inline-block bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-300 text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.topic}</span>
+                        <span class="inline-block ${difficultyColors[item.difficulty] || difficultyColors.Medium} text-xs font-semibold px-2.5 py-0.5 rounded-full">${item.difficulty}</span>
+                    </div>
+                    <p class="text-gray-700 dark:text-gray-300 mt-1.5 ${isDone ? 'line-through' : ''}">${item.text}</p>
                 </div>
-                <p class="text-gray-700 dark:text-gray-300 mt-1.5 ${isDone ? 'line-through' : ''}">${item.text}</p>
-            </div>
-            <div class="flex items-center space-x-1">
-                ${item.link ? `<a href="${item.link}" target="_blank" class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-1" title="Open question link"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg></a>` : ''}
-                <button data-id="${item.id}" data-action="view-notes" class="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1" title="View notes"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 16c1.255 0 2.443-.29 3.5-.804V4.804zM14.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 0114.5 16c1.255 0 2.443-.29 3.5-.804v-10A7.968 7.968 0 0014.5 4z" /></svg></button>
-                <button data-id="${item.id}" data-action="edit" class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1" title="Edit question"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg></button>
-                <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg></button>
-            </div>
-           `;
+                <div class="flex items-center space-x-1">
+                    ${item.link ? `<a href="${item.link}" target="_blank" class="text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 p-1" title="Open question link"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" /><path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" /></svg></a>` : ''}
+                    <button data-id="${item.id}" data-action="view-notes" class="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1" title="View notes"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 16c1.255 0 2.443-.29 3.5-.804V4.804zM14.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 0114.5 16c1.255 0 2.443-.29 3.5-.804v-10A7.968 7.968 0 0014.5 4z" /></svg></button>
+                    <button data-id="${item.id}" data-action="edit" class="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1" title="Edit question"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path d="M17.414 2.586a2 2 0 00-2.828 0L7 10.172V13h2.828l7.586-7.586a2 2 0 000-2.828z" /><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h4a1 1 0 010 2H4v10h10v-4a1 1 0 112 0v4a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd" /></svg></button>
+                    <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg></button>
+                </div>
+               `;
       return li;
     };
     
@@ -753,8 +776,7 @@ document.addEventListener('DOMContentLoaded', async () => {
            `;
         return li;
     };
-
+    
     // Start the application
     init();
 });
-
