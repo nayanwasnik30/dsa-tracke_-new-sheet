@@ -44,7 +44,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const streakCounterEl = document.getElementById('streak-counter');
     const streakTextEl = document.getElementById('streak-text');
     const loadingModal = document.getElementById('loading-modal');
-    // NEW SELECTORS for the "All Questions" filters
     const allQuestionsSearchFilter = document.getElementById('all-questions-search-filter');
     const allQuestionsTopicFilter = document.getElementById('all-questions-topic-filter');
 
@@ -146,6 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return dateToYYYYMMDD(yesterday);
     };
     
+    // FIX: This function no longer blocks the app's startup.
     const syncTime = async () => {
         const MAX_RETRIES = 3;
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -165,7 +165,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const serverTime = data.unixtime * 1000;
                 timeOffset = serverTime - Date.now();
                 console.log("Time synchronized successfully.");
-                return;
+                
+                // FIX: Re-render the UI after a successful sync to reflect the correct date.
+                updateUI(); 
+                return; 
             } catch (error) {
                 console.warn(`Time sync attempt ${attempt} failed:`, error.name === 'AbortError' ? 'Request timed out' : error.message);
                 if (attempt === MAX_RETRIES) {
@@ -245,7 +248,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     const init = async () => {
-        await syncTime();
+        // FIX: Time sync is now called without 'await' to run in the background.
+        syncTime(); 
+        
         calendarDate = getCorrectedDate();
         setupEventListeners();
         applyTheme();
@@ -314,7 +319,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.addEventListener('click', () => closeModal(btn.dataset.modalId));
         });
 
-        // NEW Event listeners for the new filters
         allQuestionsSearchFilter.addEventListener('input', () => renderAllQuestionsList(getQuestions()));
         allQuestionsTopicFilter.addEventListener('change', () => renderAllQuestionsList(getQuestions()));
         allQuestionsDifficultyFilter.addEventListener('change', () => renderAllQuestionsList(getQuestions()));
@@ -323,7 +327,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const updateUI = () => {
         const currentQuestions = getQuestions();
         populateTopicFilter(currentQuestions);
-        // NEW: Populate the second topic filter as well
         populateAllQuestionsTopicFilter(currentQuestions);
         renderFormHeader();
         renderTodaysRevisions(currentQuestions);
@@ -612,7 +615,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         topicFilter.value = currentVal;
     };
 
-    // NEW: Function to populate the topic filter in the "All Questions" section
     const populateAllQuestionsTopicFilter = (q) => {
         const topics = [...new Set(q.map(item => item.topic).filter(Boolean))];
         const currentVal = allQuestionsTopicFilter.value;
@@ -761,7 +763,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         `;
     };
     
-    // UPDATED: This function now uses the new dedicated filters
     const renderAllQuestionsList = (q) => {
         allQuestionsList.innerHTML = '';
         const searchTerm = allQuestionsSearchFilter.value.toLowerCase();
@@ -817,4 +818,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Start the application
     init();
 });
-   
+
