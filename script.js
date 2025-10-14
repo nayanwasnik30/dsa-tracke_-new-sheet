@@ -43,6 +43,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const importFileInput = document.getElementById('import-file-input');
     const streakCounterEl = document.getElementById('streak-counter');
     const streakTextEl = document.getElementById('streak-text');
+    // FIX: Add selector for the new loading modal
+    const loadingModal = document.getElementById('loading-modal');
 
     // --- SUPABASE SETUP ---
     const SUPABASE_URL = 'https://jyaspzredwtmxxpzmjez.supabase.co';
@@ -66,6 +68,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     let confirmCallback = null;
     let timeOffset = 0;
+    // FIX: State for the autosave feature
+    let lastSavedState = '';
 
     // --- UI VIEW MANAGEMENT ---
     const showApp = () => {
@@ -83,39 +87,60 @@ document.addEventListener('DOMContentLoaded', async () => {
         appScreen.classList.add('hidden');
         loginScreen.classList.remove('hidden');
     };
+    
+    // FIX: Helper functions for the loading spinner
+    const showLoading = () => loadingModal.classList.remove('hidden');
+    const hideLoading = () => loadingModal.classList.add('hidden');
 
     // --- DATA HANDLING ---
     const getQuestions = () => questions;
     const getStats = () => stats;
 
-    const saveData = async (newQuestions, newStats) => {
+    // FIX: Refactored saveData to be "pessimistic" and provide immediate feedback
+    const saveData = async (newQuestions, newStats, isAutosave = false) => {
         if (!currentUser) {
-            console.error("Save failed: No user logged in.");
+            if (!isAutosave) console.error("Save failed: No user logged in.");
             return;
         }
         
-        const oldQuestions = [...questions];
-        const oldStats = { ...stats };
-        questions = newQuestions;
-        stats = newStats;
-        updateUI();
+        // Don't show the loading spinner for silent background saves
+        if (!isAutosave) showLoading();
 
-        const dataToSave = { 
-            user_id: currentUser.id, 
-            questions: newQuestions, 
-            stats: newStats 
-        };
+        try {
+            const dataToSave = { 
+                user_id: currentUser.id, 
+                questions: newQuestions, 
+                stats: newStats 
+            };
+    
+            const { error } = await supabaseClient.from('user_data').upsert(dataToSave, { onConflict: 'user_id' });
 
-        const { error } = await supabaseClient.from('user_data').upsert(dataToSave, { onConflict: 'user_id' });
-
-        if (error) {
-            console.error("Error saving data to Supabase:", error);
-            showAlert(`Could not save changes due to a network issue: ${error.message}`, "Save Error");
-            questions = oldQuestions;
-            stats = oldStats;
-            updateUI();
-        } else {
+            if (error) {
+                // Throw the error to be caught by the catch block
+                throw error;
+            }
+            
+            // --- SUCCESS ---
             console.log("Data saved successfully to Supabase.");
+            // Now that we know it's saved, update the global state
+            questions = newQuestions;
+            stats = newStats;
+            // Update the snapshot for the autosave feature
+            lastSavedState = JSON.stringify({ questions, stats });
+            // And finally, update the UI
+            updateUI();
+
+        } catch (error) {
+            // --- FAILURE ---
+            console.error("Error saving data to Supabase:", error);
+            // Only show an alert for user-initiated saves, not background autosaves
+            if (!isAutosave) {
+                showAlert(`Could not save changes due to a network issue. Your data has not been changed. Please check your connection and try again.`, "Save Error");
+            }
+            // IMPORTANT: We don't revert anything because the global state was never changed in the first place.
+        } finally {
+            // Always hide the spinner
+            if (!isAutosave) hideLoading();
         }
     };
     
@@ -134,21 +159,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return dateToYYYYMMDD(yesterday);
     };
     
-    // FIX: This function is now more resilient to network errors.
-    // It will try up to 3 times and has a 5-second timeout for each attempt.
     const syncTime = async () => {
         const MAX_RETRIES = 3;
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                // Implement a timeout for the fetch request
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 5000); // 5-second timeout
+                const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
-                const response = await fetch('https://worldtimeapi.org/api/timezone/Asia/Kolkata', {
-                    signal: controller.signal
-                });
+                const response = await fetch('https://worldtimeapi.org/api/timezone/Asia/Kolkata', { signal: controller.signal });
                 
-                clearTimeout(timeoutId); // Clear the timeout if the request succeeds
+                clearTimeout(timeoutId);
 
                 if (!response.ok) throw new Error(`Network response was not ok (status: ${response.status})`);
                 
@@ -156,7 +176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const serverTime = data.unixtime * 1000;
                 timeOffset = serverTime - Date.now();
                 console.log("Time synchronized successfully.");
-                return; // Exit the function on success
+                return;
             } catch (error) {
                 console.warn(`Time sync attempt ${attempt} failed:`, error.name === 'AbortError' ? 'Request timed out' : error.message);
                 if (attempt === MAX_RETRIES) {
@@ -164,7 +184,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                     showAlert("Could not synchronize time with the server. Using your device's local time, which might be inaccurate.", "Time Sync Failed");
                     timeOffset = 0;
                 } else {
-                    // Wait 1 second before retrying
                     await new Promise(resolve => setTimeout(resolve, 1000));
                 }
             }
@@ -174,10 +193,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- AUTHENTICATION ---
     const handleLogin = async (e) => {
         e.preventDefault();
+        showLoading();
         const email = loginEmailInput.value;
         const password = loginPasswordInput.value;
         const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-
+        hideLoading();
         if (error) {
             console.error("Login failed:", error);
             showAlert(`Login failed: ${error.message}`, "Login Error");
@@ -193,7 +213,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             showAlert("Please enter both an email and a password to register.");
             return;
         }
+        showLoading();
         const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        hideLoading();
         if (error) {
             console.error("Registration failed:", error);
             showAlert(`Registration failed: ${error.message}`, "Registration Error");
@@ -204,41 +226,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     const handleLogout = async () => {
-        const { error } = await supabaseClient.auth.signOut();
-        if (error) {
-            console.error("Logout failed:", error);
-            showAlert(`Logout failed: ${error.message}`, "Logout Error");
-        }
+        await supabaseClient.auth.signOut();
     };
 
     // --- INITIALIZATION ---
     const fetchInitialData = async () => {
         if (!currentUser) return;
         
-        console.log(`Fetching data for user: ${currentUser.id}`);
+        showLoading();
         const { data, error } = await supabaseClient
             .from('user_data')
             .select('*')
             .eq('user_id', currentUser.id)
             .single();
+        hideLoading();
 
         if (error && error.code !== 'PGRST116') { 
             console.error("Error fetching initial data from Supabase:", error);
             showAlert(`Could not load your data: ${error.message}`, "Data Load Error");
         } else if (data) {
-            console.log("Data fetched successfully:", data);
             questions = data.questions || [];
             stats = data.stats || { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
         } else {
-            console.log("No existing data found for this user. A new record will be created on the first save.");
             questions = [];
             stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
         }
+        // FIX: Set the initial state for the autosave feature
+        lastSavedState = JSON.stringify({ questions, stats });
         updateUI();
     };
     
     const init = async () => {
-        await syncTime(); // This will now be more robust
+        await syncTime();
         calendarDate = getCorrectedDate();
         setupEventListeners();
         applyTheme();
@@ -261,6 +280,17 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showLogin();
             }
         });
+
+        // FIX: Set up the 30-second autosave interval
+        setInterval(() => {
+            if (!currentUser) return; // Don't run if logged out
+
+            const currentState = JSON.stringify({ questions: getQuestions(), stats: getStats() });
+            if (currentState !== lastSavedState) {
+                console.log("Autosave: Changes detected, syncing with database...");
+                saveData(getQuestions(), getStats(), true); // 'true' for a silent autosave
+            }
+        }, 30000); // 30 seconds
     };
     
     // --- EVENT HANDLERS & LISTENERS ---
@@ -301,7 +331,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     const updateUI = () => {
         const currentQuestions = getQuestions();
-        console.log(`Updating UI with ${currentQuestions.length} questions.`);
         populateTopicFilter(currentQuestions);
         renderFormHeader();
         renderTodaysRevisions(currentQuestions);
@@ -440,8 +469,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             completedDates: []
         };
     
-        const currentQuestions = [...getQuestions(), newQuestion];
-        await saveData(currentQuestions, getStats());
+        // Create a temporary new list of questions to try and save
+        const updatedQuestions = [...getQuestions(), newQuestion];
+        // The new saveData function will handle success/failure
+        await saveData(updatedQuestions, getStats());
+        
+        // These lines will only run if saveData was successful
         form.reset();
         questionDifficulty.value = 'Medium';
         selectedStartDate = null;
@@ -451,18 +484,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     const handleEditFormSubmit = async (e) => {
         e.preventDefault();
         const id = parseInt(document.getElementById('edit-question-id').value);
-        let currentQuestions = [...getQuestions()];
-        const questionIndex = currentQuestions.findIndex(q => q.id === id);
+        // Create a temporary copy to modify
+        let updatedQuestions = JSON.parse(JSON.stringify(getQuestions()));
+        const questionIndex = updatedQuestions.findIndex(q => q.id === id);
+        
         if (questionIndex > -1) {
-            currentQuestions[questionIndex] = {
-                ...currentQuestions[questionIndex],
+            updatedQuestions[questionIndex] = {
+                ...updatedQuestions[questionIndex],
                 text: document.getElementById('edit-question-text').value,
                 link: document.getElementById('edit-question-link').value,
                 topic: document.getElementById('edit-question-topic').value,
                 difficulty: document.getElementById('edit-question-difficulty').value,
                 notes: document.getElementById('edit-question-notes').value
             };
-            await saveData(currentQuestions, getStats());
+            // Attempt to save the modified array
+            await saveData(updatedQuestions, getStats());
+            // This will only run on successful save
             closeModal('edit-modal');
         }
     };
@@ -518,7 +555,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     };
     const toggleRevisionDone = async (id, date) => {
-        let currentQuestions = [...getQuestions()];
+        let currentQuestions = JSON.parse(JSON.stringify(getQuestions()));
         const question = currentQuestions.find(q => q.id === id);
         if (!question) return;
         
@@ -530,12 +567,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const allTodaysCompleted = allTodaysItems.every(q => q.completedDates.includes(date));
                 if (allTodaysItems.length > 0 && allTodaysCompleted) { 
                      await updateStreak(currentQuestions);
+                     // The return is important to prevent a double-save
                      return; 
                 }
             }
         } else {
             question.completedDates.splice(dateIndex, 1);
         }
+        // This will save the toggled state if the streak logic isn't triggered
         await saveData(currentQuestions, getStats());
     };
 
@@ -560,13 +599,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const data = JSON.parse(e.target.result);
                 if (!data.questions || !Array.isArray(data.questions)) throw new Error('Invalid file format.');
                 
-                openConfirmModal('Import Data?', 'This will replace all your current data in the cloud.', 'Import & Replace',
+                openConfirmModal('Import Data?', 'This will replace all your current data in the cloud with the content of this file.', 'Import & Replace',
                     async () => {
                         await saveData(data.questions || [], data.stats || { streak: 0, lastCompletedDate: null, unlockedRewards: [] });
                     }
                 );
             } catch (error) {
-                 showAlert('Failed to import file.');
+                 showAlert('Failed to import file. Make sure it is a valid JSON file from this application.');
             } finally {
                  importFileInput.value = '';
             }
@@ -575,10 +614,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     // --- RENDER FUNCTIONS ---
-    // All render functions are unchanged. They are included for completeness.
-    // ... (All your render functions from createRevisionListItem to createBaseQuestionListItem go here, exactly as they were)
-
-    // --- RENDER FUNCTIONS (Copied from your original code) ---
     const populateTopicFilter = (q) => {
         const topics = [...new Set(q.map(item => item.topic).filter(Boolean))];
         const currentVal = topicFilter.value;
@@ -624,15 +659,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     
     const createRevisionListItem = (item) => {
-      const isDone = item.completedDates.includes(item.revisionDate);
-      const difficultyColors = {
+        const isDone = item.completedDates.includes(item.revisionDate);
+        const difficultyColors = {
             Easy: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
             Medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
             Hard: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
-      };
-      const li = document.createElement('li');
-      li.className = `flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 transition-opacity ${isDone ? 'opacity-50' : ''}`;
-      li.innerHTML = `
+        };
+        const li = document.createElement('li');
+        li.className = `flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700 transition-opacity ${isDone ? 'opacity-50' : ''}`;
+        li.innerHTML = `
                 <input type="checkbox" data-id="${item.id}" data-date="${item.revisionDate}" ${isDone ? 'checked' : ''} class="custom-checkbox mt-1 h-5 w-5 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
                 <div class="flex-1">
                     <div class="flex items-center gap-2 flex-wrap">
@@ -648,7 +683,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <button data-id="${item.id}" data-action="delete" class="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-1" title="Delete this question entirely"><svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 pointer-events-none" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd" /></svg></button>
                 </div>
                `;
-      return li;
+        return li;
     };
     
     const applyFilters = (items) => {
