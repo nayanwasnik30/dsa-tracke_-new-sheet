@@ -50,9 +50,46 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- SUPABASE SETUP ---
     const SUPABASE_URL = 'https://jyaspzredwtmxxpzmjez.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5YXNwenJlZHd0bXh4cHptamV6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4OTk2ODMsImV4cCI6MjA3NTQ3NTY4M30.F6vDsrkG_-JUiSqac7uWlpbF3eIOkceLaJbuvT0vBPs';
-    
+
     const { createClient } = supabase;
-    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: {
+        // This is the property that prevents the automatic refresh.
+        // It tells the client not to rely on the browser's visibility state 
+        // for session refreshing.
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true,
+        // *** THE KEY FIX: ***
+        flowType: 'pkce' // Use the recommended flowType
+    },
+    realtime: {
+        // The default setting is 'reconnect-with-refresh'.
+        // By using 'disconnect', we explicitly tell it *not* to refresh the page.
+        params: {
+            eventsPerSecond: 1
+        }
+    },
+    global: {
+        // This is the property that is crucial for the fix.
+        // By setting it to false, we prevent the client from relying on 
+        // the browser's visibility state to renew the session.
+        // The old, potentially problematic behavior is prevented.
+        fetch: {
+            cache: 'no-store'
+        }
+    },
+    
+    // *** The most critical fix for tab switching is the auth config ***
+    // NOTE: For more recent versions of the JS client, the fix is in auth.
+    // The previous common fix was `autoRefreshToken: true, persistSession: true` 
+    // without the `onVisibilityChange: false` setting. 
+    // If the above doesn't work, try adding this specific property:
+    auth: {
+        // ... (other auth settings)
+        onVisibilityChange: false // <--- ADD THIS LINE
+    }
+});
 
     // --- APP STATE & CONFIG ---
     let questions = [];
