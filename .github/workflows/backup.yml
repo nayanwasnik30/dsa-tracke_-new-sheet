@@ -1,0 +1,58 @@
+name: Daily Supabase Backup
+
+on:
+  # 1. Run automatically every day at 2:00 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # 2. Allow you to run it manually from the "Actions" tab
+  workflow_dispatch:
+
+jobs:
+  backup-database:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          
+      - name: Install AWS CLI (for R2 Upload)
+        run: |
+          sudo apt-get install -y awscli
+
+      - name: Configure AWS CLI for R2
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          aws configure set aws_access_key_id $R2_ACCESS_KEY_ID
+          aws configure set aws_secret_access_key $R2_SECRET_ACCESS_KEY
+          aws configure set default.region auto
+
+      - name: Run pg_dump
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          echo "Starting database dump..."
+          # Create a backup file with today's date
+          export BACKUP_FILE="backup-$(date +%Y-%m-%d-%H%M).sql"
+          
+          # Run the dump
+          # -F c = custom format (good for restoring)
+          # -Z 9 = maximum compression
+          pg_dump -d "$SUPABASE_DB_URL" -F c -Z 9 -v > $BACKUP_FILE
+          
+          echo "Database dump complete: $BACKUP_FILE"
+          echo "BACKUP_FILE_NAME=$BACKUP_FILE" >> $GITHUB_ENV
+
+      - name: Upload backup to Cloudflare R2
+        env:
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+        run: |
+          echo "Uploading $BACKUP_FILE_NAME to R2 bucket $R2_BUCKET_NAME..."
+          aws s3 cp $BACKUP_FILE_NAME s3://$R2_BUCKET_NAME/ --endpoint-url $R2_ENDPOINT_URL
+          echo "Upload complete."
