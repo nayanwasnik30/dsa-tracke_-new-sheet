@@ -60,6 +60,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let stats = { streak: 0, lastCompletedDate: null, unlockedRewards: [] };
     let currentUser = null;
     const defaultIntervals = [3, 7, 15, 30, 60];
+    const MAX_QUESTIONS_PER_DAY = 3; // Moved to global scope
     let calendarDate;
     let selectedStartDate = null;
     const rewardMilestones = {
@@ -108,6 +109,44 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
         });
         return counts;
+    };
+
+    // --- NEW HELPER FUNCTION ---
+    // This function calculates the *actual* list of items to do today,
+    // respecting the daily limit and pulling in overdue items.
+    const getDueItems = (q) => {
+        const todayStr = getTodayStr();
+        
+        // 1. Get all items scheduled for *exactly* today
+        const itemsScheduledForToday = q
+            .filter(item => item.revisionDates.includes(todayStr) && !item.completedDates.includes(todayStr))
+            .map(item => ({ ...item, revisionDate: todayStr }));
+
+        // 2. Get all *overdue* items (oldest first)
+        const overdueItems = [];
+        q.forEach(item => {
+            const earliestOverdueDate = item.revisionDates
+                .filter(date => date < todayStr && !item.completedDates.includes(date))
+                .sort()[0]; // Find the *oldest* overdue date for this item
+
+            if (earliestOverdueDate) {
+                overdueItems.push({ ...item, revisionDate: earliestOverdueDate });
+            }
+        });
+        // Sort the final overdue list by their earliest due date (oldest first)
+        overdueItems.sort((a, b) => a.revisionDate.localeCompare(b.revisionDate));
+
+        // 3. Combine the lists, respecting the daily limit
+        const finalTodaysList = [...itemsScheduledForToday];
+        
+        // 4. Pull in overdue items *only* if there is space
+        while (finalTodaysList.length < MAX_QUESTIONS_PER_DAY && overdueItems.length > 0) {
+            const oldestOverdueItem = overdueItems.shift(); // Get the oldest item
+            finalTodaysList.push(oldestOverdueItem);
+        }
+
+        // We return this list for other functions to use
+        return finalTodaysList;
     };
 
     const saveData = async (newQuestions, newStats, isAutosave = false) => {
@@ -269,6 +308,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     // This new init() function uses a more robust auth listener
     // to prevent re-loading data when the tab is re-focused.
     const init = async () => {
+        // --- NEW ---
+        // Inject CSS for the 'is-full' calendar days
+        const style = document.createElement('style');
+        style.textContent = `
+            .calendar-day.is-full {
+                background-color: #f3f4f6; /* gray-100 */
+                color: #9ca3af; /* gray-400 */
+                cursor: not-allowed;
+                text-decoration: line-through;
+                opacity: 0.8;
+            }
+            .dark .calendar-day.is-full {
+                background-color: #374151; /* gray-700 */
+                color: #6b7280; /* gray-500 */
+            }
+            /* Keep today's styling prominent even if full */
+            .calendar-day.is-full.is-today {
+                text-decoration: line-through;
+                opacity: 1;
+            }
+        `;
+        document.head.appendChild(style);
+        // --- END NEW ---
+
         // Time sync is now called without 'await' to run in the background.
         syncTime(); 
         
@@ -342,11 +405,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         darkModeToggle.addEventListener('click', toggleTheme);
         prevMonthBtn.addEventListener('click', () => {
             calendarDate.setMonth(calendarDate.getMonth() - 1);
-            renderCalendar(getQuestions());
+            // --- MODIFIED ---
+            const q = getQuestions();
+            const counts = getScheduleCounts(q);
+            renderCalendar(q, counts);
+            // --- END MODIFIED ---
         });
         nextMonthBtn.addEventListener('click', () => {
             calendarDate.setMonth(calendarDate.getMonth() + 1);
-            renderCalendar(getQuestions());
+            // --- MODIFIED ---
+            const q = getQuestions();
+            const counts = getScheduleCounts(q);
+            renderCalendar(q, counts);
+            // --- END MODIFIED ---
         });
         calendarGrid.addEventListener('click', handleCalendarDayClick);
         editForm.addEventListener('submit', handleEditFormSubmit);
@@ -374,12 +445,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!currentUser) return; // General guard
 
         const currentQuestions = getQuestions();
+        const scheduleCounts = getScheduleCounts(currentQuestions); // Get counts once
         populateTopicFilter(currentQuestions);
         populateAllQuestionsTopicFilter(currentQuestions);
         renderFormHeader();
         renderTodaysRevisions(currentQuestions);
         renderRevisions(currentQuestions);
-        renderCalendar(currentQuestions);
+        renderCalendar(currentQuestions, scheduleCounts); // Pass counts
         renderStreak();
         renderProgress(currentQuestions);
         renderAllQuestionsList(currentQuestions);
@@ -417,8 +489,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const renderProgress = (q) => {
         const todayStr = getTodayStr();
-        const todaysItems = q.filter(item => item.revisionDates.includes(todayStr));
-        const completedItems = todaysItems.filter(item => item.completedDates.includes(todayStr));
+        
+        // --- UPDATED LOGIC ---
+        // The progress bar now reflects the *actual* to-do list
+        // (including any pulled-forward overdue items), not just items scheduled for today.
+        const todaysItems = getDueItems(q); // Get the "real" to-do list
+        
+        // We must check completion against the *specific* revisionDate
+        // (which could be today or an overdue date)
+        const completedItems = todaysItems.filter(item => item.completedDates.includes(item.revisionDate));
+        
         const total = todaysItems.length;
         const completed = completedItems.length;
         progressText.textContent = `${completed}/${total} Completed`;
@@ -481,10 +561,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     const handleCalendarDayClick = (e) => {
         const dayEl = e.target.closest('.calendar-day');
         if (!dayEl || !dayEl.dataset.date) return;
+
+        // --- NEW LOGIC ---
+        // Prevent selection if the day is marked as full
+        if (dayEl.classList.contains('is-full')) {
+            console.log("This day is full and cannot be selected as a start date.");
+            return; 
+        }
+        // --- END NEW LOGIC ---
+
         const clickedDate = dayEl.dataset.date;
         selectedStartDate = selectedStartDate === clickedDate ? null : clickedDate;
         renderFormHeader();
-        renderCalendar(getQuestions()); // Re-render calendar to show selection
+        
+        // --- MODIFIED LOGIC ---
+        // Re-render calendar to show selection
+        // We must re-fetch questions and counts to pass to renderCalendar
+        const currentQuestions = getQuestions();
+        const scheduleCounts = getScheduleCounts(currentQuestions);
+        renderCalendar(currentQuestions, scheduleCounts);
+        // --- END MODIFIED LOGIC ---
     };
 
     const handleFormSubmit = async (e) => {
@@ -497,10 +593,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        // --- NEW LOGIC: Load balancing ---
+        // --- MODIFIED LOGIC ---
         const currentQuestions = getQuestions();
         const scheduleCounts = getScheduleCounts(currentQuestions);
-        const MAX_QUESTIONS_PER_DAY = 3;
+        // const MAX_QUESTIONS_PER_DAY = 3; // Now a global constant
         const revisionDates = [];
         const baseStartDate = selectedStartDate ? new Date(selectedStartDate + 'T00:00:00') : getCorrectedDate();
 
@@ -718,7 +814,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         allQuestionsTopicFilter.value = currentVal;
     };
 
-    const renderCalendar = (q) => {
+    const renderCalendar = (q, scheduleCounts) => { // Signature changed
         calendarGrid.innerHTML = '';
         const year = calendarDate.getFullYear();
         const month = calendarDate.getMonth();
@@ -743,6 +839,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             dayEl.className = 'calendar-day';
             dayEl.dataset.date = currentDateStr;
             if (revisionDatesSet.has(currentDateStr)) dayEl.classList.add('has-revision');
+
+            // --- NEW LOGIC ---
+            // Mark days as 'full' if they meet the criteria
+            const count = scheduleCounts.get(currentDateStr) || 0;
+            if (count >= MAX_QUESTIONS_PER_DAY && currentDateStr >= getTodayStr()) {
+                dayEl.classList.add('is-full');
+            }
+            // --- END NEW LOGIC ---
+
             if (currentDateStr === getTodayStr()) dayEl.classList.add('is-today');
             if (currentDateStr === selectedStartDate) dayEl.classList.add('is-selected');
             calendarGrid.appendChild(dayEl);
@@ -791,11 +896,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const renderTodaysRevisions = (q) => {
         todayRevisionList.innerHTML = '';
-        const todayStr = getTodayStr();
-        let todaysItems = q
-            .filter(item => item.revisionDates.includes(todayStr))
-            .map(item => ({ ...item, revisionDate: todayStr }));
-        todaysItems = applyFilters(todaysItems);
+
+        // --- UPDATED LOGIC ---
+        // 1. Get the authoritative list of items to do today.
+        // This list respects the daily limit and pulls overdue items.
+        const dueItems = getDueItems(q);
+        
+        // 2. Now, apply the user's UI filters (search, topic, etc.)
+        let todaysItems = applyFilters(dueItems);
+        // --- END UPDATED LOGIC ---
+
         if (todaysItems.length === 0) {
             todayRevisionList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-4">All caught up for today! 🎉</p>`;
             return;
