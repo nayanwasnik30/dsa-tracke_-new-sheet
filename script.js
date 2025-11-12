@@ -529,25 +529,29 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
 
-
+        // =========== THIS IS THE FIXED CODE BLOCK ===========
         supabaseClient.auth.onAuthStateChange(async (event, session) => {
-
-            if (event === 'SIGNED_IN') {
-
-                currentUser = session.user;
-
-                await fetchInitialData();
-
-                showApp();
-
-            } else if (event === 'SIGNED_OUT') {
-
-                showLogin();
-
+    
+            // THIS IS THE FIX:
+            // If the event is a refresh, OR if it's 'SIGNED_IN' but we already
+            // have a user, just stop. Don't re-fetch.
+            if ((event === 'SIGNED_IN' && currentUser) || event === 'TOKEN_REFRESHED') {
+                return;
             }
 
+            // This code now only runs on the *very first* login
+            if (event === 'SIGNED_IN') {
+                currentUser = session.user;
+                await fetchInitialData();
+                showApp();
+            } 
+            
+            // This part is the same
+            else if (event === 'SIGNED_OUT') {
+                showLogin();
+            }
         });
-
+        // ====================================================
 
 
         setInterval(() => {
@@ -1368,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 </div>
 
-               `;
+                `;
 
         return li;
 
@@ -1492,7 +1496,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
          if (!hasVisibleRevisions) {
 
-            revisionList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-8">No scheduled revisions found for the selected filters.</p>`;
+             revisionList.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-center py-8">No scheduled revisions found for the selected filters.</p>`;
 
         }
 
@@ -1582,7 +1586,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             Easy: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
 
-            Medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
+            Medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-30m0',
 
             Hard: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
 
@@ -1624,7 +1628,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             </div>
 
-           `;
+            `;
 
         return li;
 
