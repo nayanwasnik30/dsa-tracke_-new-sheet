@@ -495,85 +495,83 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     
-
+    // =========== THIS IS THE CORRECTED INIT FUNCTION ===========
     const init = async () => {
-
         // FIX: Time sync is now called without 'await' to run in the background.
-
         syncTime(); 
 
-        
-
         calendarDate = getCorrectedDate();
-
         setupEventListeners();
-
         applyTheme();
 
+        // --- THIS IS THE NEW, ROBUST AUTH LOGIC ---
 
-
-        const { data: { session } } = await supabaseClient.auth.getSession();
-
-        if (session) {
-
-            currentUser = session.user;
-
+        // 1. Get the session on initial load.
+        // This sets the correct "currentUser" *before* the listener is attached.
+        const { data: { session: initialSession } } = await supabaseClient.auth.getSession();
+        if (initialSession) {
+            console.log("Initial session found. Fetching data...");
+            currentUser = initialSession.user;
             await fetchInitialData();
-
             showApp();
-
         } else {
-
+            console.log("No initial session. Showing login.");
             showLogin();
-
         }
 
-
-        // =========== THIS IS THE FIXED CODE BLOCK ===========
+        // 2. Attach the "smarter" listener.
+        // This listener now checks if the user state *actually changed*
+        // before fetching data, which prevents tab-switch reloads.
         supabaseClient.auth.onAuthStateChange(async (event, session) => {
-    
-            // THIS IS THE FIX:
-            // If the event is a refresh, OR if it's 'SIGNED_IN' but we already
-            // have a user, just stop. Don't re-fetch.
-            if ((event === 'SIGNED_IN' && currentUser) || event === 'TOKEN_REFRESHED') {
-                return;
-            }
-
-            // This code now only runs on the *very first* login
-            if (event === 'SIGNED_IN') {
-                currentUser = session.user;
-                await fetchInitialData();
-                showApp();
+            
+            if (session) {
+                // A user is logged in.
+                
+                // CHECK: Is this a *new* user logging in, or just a refresh?
+                // We fetch data ONLY if:
+                // 1. We had NO user before (currentUser was null)
+                // 2. The user ID is DIFFERENT from the one we had.
+                if (!currentUser || currentUser.id !== session.user.id) {
+                    console.log("Auth change: New user detected. Fetching data...");
+                    currentUser = session.user;
+                    await fetchInitialData();
+                    showApp();
+                } else {
+                    // It's the same user. This is just a token refresh (e.g., tab switch).
+                    // We update the user object but *do not* fetch data.
+                    console.log("Auth change: Session refresh for same user. Ignoring.");
+                    currentUser = session.user;
+                }
             } 
             
-            // This part is the same
-            else if (event === 'SIGNED_OUT') {
-                showLogin();
+            else if (!session) {
+                // No session. This is a logout.
+                
+                // CHECK: Were we previously logged in?
+                if (currentUser) {
+                    console.log("Auth change: Logout detected.");
+                    showLogin(); // This function already sets currentUser to null
+                } else {
+                    // We were already logged out and an auth event fired.
+                    console.log("Auth change: Already logged out. Ignoring.");
+                }
             }
         });
-        // ====================================================
+        // --- END OF NEW AUTH LOGIC ---
 
 
+        // This autosave interval is unchanged
         setInterval(() => {
-
             if (!currentUser) return; 
 
-
-
             const currentState = JSON.stringify({ questions: getQuestions(), stats: getStats() });
-
             if (currentState !== lastSavedState) {
-
                 console.log("Autosave: Changes detected, syncing with database...");
-
                 saveData(getQuestions(), getStats(), true); 
-
             }
-
         }, 30000); 
-
     };
-
+    // ==========================================================
     
 
     // --- EVENT HANDLERS & LISTENERS ---
@@ -1586,7 +1584,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             Easy: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
 
-            Medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-30m0',
+            Medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
 
             Hard: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
 
